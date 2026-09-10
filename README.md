@@ -269,7 +269,7 @@ Other knobs (passed to `scripts/moviola.py`):
 │       ├── workdir.py            # exclusive hold on --out-dir for the life of one run
 │       ├── setup.py              # preflight + installer
 │       └── build-skill.sh        # build dist/moviola.skill for claude.ai upload (dev-only)
-├── hooks/                        # SessionStart status hook (Claude Code only)
+├── hooks/                        # SessionStart status hook (Claude Code + Codex)
 ├── .claude-plugin/               # plugin.json + marketplace.json (Claude Code)
 ├── .codex-plugin/                # plugin.json — Codex/agents manifest ("skills": "./skills/")
 ├── .agents/plugins/              # marketplace.json — Agent Skills marketplace listing

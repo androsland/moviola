@@ -9,6 +9,7 @@ on whether the developer's machine happens to have faster-whisper installed.
 """
 from __future__ import annotations
 
+import json
 import stat
 import subprocess
 from pathlib import Path
@@ -19,7 +20,10 @@ import config
 import untrusted
 from untrusted import LINE_BREAKS
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "scripts" / "check-setup.sh"
+REPO = Path(__file__).resolve().parent.parent
+HOOK = REPO / "hooks" / "scripts" / "check-setup.sh"
+HOOK_CONFIG = REPO / "hooks" / "hooks.json"
+CODEX_MANIFEST = REPO / ".codex-plugin" / "plugin.json"
 
 # Inert filler, spelled the way test_consent_oracles.py spells it. Deliberately
 # not shaped like a provider key, so neither a secret scanner nor a human
@@ -72,6 +76,112 @@ def _run(
     return subprocess.run(
         ["bash", str(HOOK)], capture_output=True, text=True, env=env,
     )
+
+
+def _hook_command() -> str:
+    config = json.loads(HOOK_CONFIG.read_text(encoding="utf-8"))
+    return config["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+
+
+def _run_hook_command(extra_env: dict[str, str]) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        ["bash", "-c", _hook_command()],
+        capture_output=True,
+        text=True,
+        env={"PATH": "/usr/bin:/bin", **extra_env},
+    )
+
+
+def _plugin_root(tmp_path: Path, *, name: str, exit_code: int = 0) -> Path:
+    root = tmp_path / name
+    script = root / "hooks" / "scripts" / "check-setup.sh"
+    script.parent.mkdir(parents=True)
+    script.write_text(
+        "#!/usr/bin/env bash\nprintf 'setup hook launched\\n'\n"
+        f"exit {exit_code}\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+class TestHookCommandRouting:
+    """The shared plugin hook has to launch under either host's root contract."""
+
+    def test_codex_with_only_plugin_root_launches_the_setup_hook(self, tmp_path):
+        root = _plugin_root(tmp_path, name="codex-plugin")
+
+        out = _run_hook_command({"PLUGIN_ROOT": str(root)})
+
+        assert out.returncode == 0
+        assert out.stdout == "setup hook launched\n"
+
+    def test_claude_code_with_only_claude_plugin_root_launches_the_hook(
+        self, tmp_path
+    ):
+        root = _plugin_root(tmp_path, name="claude-plugin")
+
+        out = _run_hook_command({"CLAUDE_PLUGIN_ROOT": str(root)})
+
+        assert out.returncode == 0
+        assert out.stdout == "setup hook launched\n"
+
+    def test_a_plugin_root_path_containing_spaces_is_quoted_safely(self, tmp_path):
+        root = _plugin_root(tmp_path, name="installed plugins/moviola 0.3.2")
+
+        out = _run_hook_command({"PLUGIN_ROOT": str(root)})
+
+        assert out.returncode == 0
+        assert out.stdout == "setup hook launched\n"
+
+    def test_neither_plugin_root_variable_set_fails_open(self):
+        out = _run_hook_command({})
+
+        assert out.returncode == 0
+        assert out.returncode != 127
+        assert out.stdout == ""
+        assert out.stderr == ""
+
+    def test_a_resolved_root_with_no_setup_script_fails_open(self, tmp_path):
+        root = tmp_path / "plugin-without-hook"
+        root.mkdir()
+
+        out = _run_hook_command({"PLUGIN_ROOT": str(root)})
+
+        assert out.returncode == 0
+        assert out.returncode != 127
+        assert out.stdout == ""
+        assert out.stderr == ""
+
+    def test_a_missing_codex_script_can_fall_back_to_the_claude_root(self, tmp_path):
+        missing = tmp_path / "missing-codex-hook"
+        missing.mkdir()
+        fallback = _plugin_root(tmp_path, name="claude-fallback")
+
+        out = _run_hook_command(
+            {
+                "PLUGIN_ROOT": str(missing),
+                "CLAUDE_PLUGIN_ROOT": str(fallback),
+            }
+        )
+
+        assert out.returncode == 0
+        assert out.stdout == "setup hook launched\n"
+
+    def test_a_located_setup_script_failure_is_not_hidden(self, tmp_path):
+        root = _plugin_root(tmp_path, name="failing-plugin", exit_code=23)
+
+        out = _run_hook_command({"PLUGIN_ROOT": str(root)})
+
+        assert out.returncode == 23
+        assert out.stdout == "setup hook launched\n"
+
+    def test_codex_uses_the_supported_default_shared_hook_file(self):
+        manifest = json.loads(CODEX_MANIFEST.read_text(encoding="utf-8"))
+
+        assert "hooks" not in manifest, (
+            "Codex auto-discovers hooks/hooks.json. A manifest override is only "
+            "needed when the clients require different event definitions."
+        )
 
 
 class TestPinIsHonoured:
