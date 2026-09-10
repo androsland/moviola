@@ -2,6 +2,12 @@
 
 All notable changes to `/moviola` are documented here.
 
+## [Unreleased]
+
+### Fixed
+
+- The shared SessionStart hook now locates its setup check through Codex's `PLUGIN_ROOT` or Claude Code's `CLAUDE_PLUGIN_ROOT`, quotes paths containing spaces, and fails open when neither root leads to the bundled script. Once found, the setup check is launched with its exit status intact. Codex continues to use the supported default `hooks/hooks.json` discovery path because Moviola's event definition is identical on both clients.
+
 ## [0.3.2] — 2026-08-28
 
 ### Security
